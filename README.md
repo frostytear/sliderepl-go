@@ -8,7 +8,7 @@ I also made it so that the slides didn't have to be full Go programs, but can be
 
 ## How to use
 
-* Put your slides in `slides.go` (or point to the file with `--slides=`)
+* Put your slides in `slides.go` (or point to the file with `-slides="myfile"`)
 * Run `go run sliderepl.go`
 * Go to `http://localhost:3999`
 
