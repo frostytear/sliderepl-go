@@ -1,10 +1,10 @@
 # sliderepl for go
 
-Inspired by http://discorporate.us/projects/sliderepl/ for Python, I wanted to have similar funcitonality for Go, similar to the [the Go tour](http://tour.golang.org/) and [Go Play](http://play.golang.org), but self-contained and suitable for presentations.
+Inspired by http://discorporate.us/projects/sliderepl/ for Python, I wanted to have similar funcitonality for Go, much like the [the Go tour](http://tour.golang.org/) and [Go Play](http://play.golang.org), but self-contained and suitable for presentations.
 
-So, I modified the `go/misc/goplay/goplay.go` file to support the concept of slides.
+Essentially, this is a modification of the `go/misc/goplay/goplay.go` file to support the concept of slides.
 
-I also made it so that the slides didn't have to be full Go programs, but can be snippets that are automatically made into propery `func main()`-like programs (with imports being fixed).
+I also made it so that the slides didn't have to be full Go programs, but can be snippets that are automatically made into proper `func main()`-like programs (with imports being fixed).
 
 ## How to use
 
