@@ -8,6 +8,7 @@ package main
 import (
 	"bytes"
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -17,12 +18,15 @@ import (
 	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
 	"text/template"
 )
 
 var (
 	httpListen = flag.String("http", "127.0.0.1:3999", "host:port to listen on")
 	htmlOutput = flag.Bool("html", false, "render program output as HTML")
+	slidesFile = flag.String("slides", "slides.go", "Slides file to read in")
+	slides     [][]byte
 )
 
 var (
@@ -40,9 +44,34 @@ func main() {
 		}
 	}()
 
+	readSlides()
+
 	http.HandleFunc("/", FrontPage)
 	http.HandleFunc("/compile", Compile)
+	fmt.Printf("Listening on %s\n", *httpListen)
 	log.Fatal(http.ListenAndServe(*httpListen, nil))
+}
+
+func readSlides() {
+	slidesRaw, err := ioutil.ReadFile(*slidesFile)
+	if err != nil {
+		panic(err)
+	}
+	splitSlides := strings.Split(string(slidesRaw), "//!")
+	slides = make([][]byte, 0, len(splitSlides))
+	for _, slideString := range splitSlides {
+		trimmed := strings.TrimSpace(slideString)
+		if len(trimmed) == 0 {
+			continue
+		}
+		slides = append(slides, []byte(trimmed))
+	}
+}
+
+type PageData struct {
+	Data      string
+	PrevSlide int64
+	NextSlide int64
 }
 
 // FrontPage is an HTTP handler that renders the goplay interface.
@@ -51,10 +80,23 @@ func main() {
 // Otherwise, the default "hello, world" program is displayed.
 func FrontPage(w http.ResponseWriter, req *http.Request) {
 	data, err := ioutil.ReadFile(req.URL.Path[1:])
-	if err != nil {
-		data = helloWorld
+	slide := int64(0)
+	if s := req.URL.Query()["s"]; s != nil {
+		slide, _ = strconv.ParseInt(s[0], 10, 16)
 	}
-	frontPage.Execute(w, data)
+	if err != nil {
+		data = slides[slide]
+	}
+	prevSlide := slide - 1
+	if prevSlide < 0 {
+		prevSlide = 0
+	}
+	nextSlide := slide + 1
+	if int(nextSlide) >= len(slides) {
+		nextSlide = slide
+	}
+	params := PageData{string(data), prevSlide, nextSlide}
+	frontPage.Execute(w, params)
 }
 
 // Compile is an HTTP handler that reads Go source code from the request,
@@ -78,6 +120,7 @@ func Compile(w http.ResponseWriter, req *http.Request) {
 var (
 	commentRe = regexp.MustCompile(`(?m)^#.*\n`)
 	packageRe = regexp.MustCompile(`^package`)
+	importRe  = regexp.MustCompile(`\nimport .*`)
 	tmpdir    string
 )
 
@@ -114,10 +157,28 @@ func compile(req *http.Request) (out []byte, err error) {
 		return
 	}
 
+	originalBodyBytes := body.Bytes()
+	var bodyBytes []byte
+
 	// check to see if the body starts with a "package"
+	if packageRe.Find(originalBodyBytes) == nil {
+		newBody := new(bytes.Buffer)
+		newBody.WriteString("package main\n")
+		// move all import lines to the top
+		for _, importLine := range importRe.FindAll(originalBodyBytes, -1) {
+			newBody.Write(importLine)
+			newBody.WriteRune(10)
+		}
+		newBody.WriteString("func main() {\n")
+		newBody.Write(importRe.ReplaceAll(originalBodyBytes, make([]byte, 0)))
+		newBody.WriteString("\n}\n")
+		bodyBytes = newBody.Bytes()
+	} else {
+		bodyBytes = originalBodyBytes
+	}
 
 	defer os.Remove(src)
-	if err = ioutil.WriteFile(src, body.Bytes(), 0666); err != nil {
+	if err = ioutil.WriteFile(src, bodyBytes, 0666); err != nil {
 		return
 	}
 
@@ -277,10 +338,13 @@ function compileUpdate() {
 </head>
 <body>
 <table width="100%"><tr><td width="60%" valign="top">
-<textarea autofocus="true" id="edit" spellcheck="false" onkeydown="keyHandler(event);" onkeyup="autocompile();">{{printf "%s" . |html}}</textarea>
+<textarea autofocus="true" id="edit" spellcheck="false" onkeydown="keyHandler(event);" onkeyup="autocompile();">{{printf "%s" .Data |html}}</textarea>
 <div class="hints">
 (Shift-Enter to compile and run.)&nbsp;&nbsp;&nbsp;&nbsp;
 <input type="checkbox" id="autocompile" value="checked" /> Compile and run after each keystroke
+<button onclick="window.location.href = '/?s={{ printf "%d" .PrevSlide }}'">Previous</button>
+<button onclick="window.location.href = '/?s={{ printf "%d" .NextSlide }}'">Next</button>
+
 </div>
 <td width="3%">
 <td width="27%" align="right" valign="top">
@@ -290,12 +354,3 @@ function compileUpdate() {
 </body>
 </html>
 `
-
-var helloWorld = []byte(`package main
-
-import "fmt"
-
-func main() {
-	fmt.Println("hello, world")
-}
-`)
