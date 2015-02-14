@@ -31,6 +31,7 @@ var (
 	httpListen = flag.String("http", "127.0.0.1:3999", "host:port to listen on")
 	htmlOutput = flag.Bool("html", false, "render program output as HTML")
 	slidesFile = flag.String("slides", "slides.go", "Slides file to read in")
+	staticHTML = flag.String("static", "", "write slides to static HTML file")
 	slides     []Slide
 )
 
@@ -50,11 +51,20 @@ func main() {
 	}()
 
 	readSlides()
-
-	http.HandleFunc("/", FrontPage)
-	http.HandleFunc("/compile", Compile)
-	fmt.Printf("Listening on %s\n", *httpListen)
-	log.Fatal(http.ListenAndServe(*httpListen, nil))
+	if *staticHTML != "" {
+		fmt.Println("Writing to file", *staticHTML)
+		f, err := os.Create(*staticHTML)
+		if err != nil {
+			log.Fatal(err)
+		}
+		err = staticPage.Execute(f, slides)
+		f.Close()
+	} else {
+		http.HandleFunc("/", FrontPage)
+		http.HandleFunc("/compile", Compile)
+		fmt.Printf("Listening on %s\n", *httpListen)
+		log.Fatal(http.ListenAndServe(*httpListen, nil))
+	}
 }
 
 func readSlides() {
@@ -233,9 +243,115 @@ func run(dir string, args ...string) ([]byte, error) {
 }
 
 var frontPage = template.Must(template.New("frontPage").Parse(frontPageText)) // HTML template
-var output = template.Must(template.New("output").Parse(outputText))          // HTML template
+var staticPage = template.Must(template.New("staticPage").Parse(staticPageText))
+var output = template.Must(template.New("output").Parse(outputText)) // HTML template
 
 var outputText = `<pre>{{printf "%s" . |html}}</pre>`
+
+var staticPageText = `<!doctype html>
+<html>
+<head>
+<style>
+.notes .slide {
+	font-family: Monaco, 'Courier New', 'DejaVu Sans Mono', 'Bitstream Vera Sans Mono', monospace;
+}
+.slide td {
+	border: 1px solid black;
+	height: 400px;
+}
+.controls td {
+	height: 20px;
+}
+.notes td {
+	height: 80px;
+}
+td {
+	width: 800px;
+	vertical-align: text-top;
+	padding: 10px;
+}
+
+</style>
+<script>
+
+function toggleNotes() {
+	if (noteState=="none") {
+		noteState = "inline"
+		document.cookie="notes=true"
+		document.getElementById("noteButton").innerHTML = "Hide notes"
+	} else {
+		noteState = "none"
+		document.cookie="notes="
+		document.getElementById("noteButton").innerHTML = "Show notes"
+	}
+	displaySlide()
+}
+
+function next() {
+	currentSlide++;
+	displaySlide();
+}
+
+function prev() {
+	currentSlide--;
+	displaySlide();
+}
+
+function displaySlide() {
+	numSlides = document.getElementsByClassName("slide").length
+	if (currentSlide < 0) {
+		currentSlide = 0;
+	}
+	if (currentSlide >= numSlides) {
+		currentSlide = numSlides-1;
+	}
+	for (i=0; i<numSlides; i++) {
+		if (i==currentSlide) {
+			document.getElementById("slide_"+i).style.display="inline"
+			if (noteState=="inline") {
+				document.getElementById("notes_"+i).style.display="inline"
+			} else {
+				document.getElementById("notes_"+i).style.display="none"
+			}
+		} else {
+			document.getElementById("slide_"+i).style.display="none"
+			document.getElementById("notes_"+i).style.display="none"
+		}
+	}
+}
+
+function onPageLoad() {
+	currentSlide = 0
+	noteState = "none"
+	var c = document.cookie;
+	if (c.search("notes=true")>=0) {
+		toggleNotes()
+	}
+	displaySlide()
+}
+
+</script>
+</head>
+<body onload="onPageLoad()">
+<table>
+{{range $i, $contents := .}}
+<tr class="slide" id="slide_{{printf "%d" $i }}"><td><pre>{{printf "%s" $contents.Contents |html}}</pre></td></tr>
+{{end}}
+<tr class="controls"><td>
+<button id="noteButton" onclick="toggleNotes()">Show notes</button>
+<button onclick="prev()">Previous</button>
+<button onclick="next()">Next</button>
+</td></tr>
+{{range $i, $contents := .}}
+<tr class="notes" id="notes_{{printf "%d" $i }}"><td>
+<pre>{{printf "%s" $contents.Notes |html}}</pre>
+</td></tr>
+{{end}}
+</table>
+
+</body>
+</html>
+`
 
 var frontPageText = `<!doctype html>
 <html>
