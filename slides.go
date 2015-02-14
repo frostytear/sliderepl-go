@@ -4,6 +4,9 @@ import "fmt"
 
 fmt.Println("hello, world")
 
+/*--
+These are speaking notes
+*/
 //!
 // A simple for-loop
 import "fmt"
