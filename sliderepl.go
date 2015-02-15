@@ -308,11 +308,7 @@ function displaySlide() {
 	for (i=0; i<numSlides; i++) {
 		if (i==currentSlide) {
 			document.getElementById("slide_"+i).style.display="inline"
-			if (noteState=="inline") {
-				document.getElementById("notes_"+i).style.display="inline"
-			} else {
-				document.getElementById("notes_"+i).style.display="none"
-			}
+			document.getElementById("notes_"+i).style.display=noteState
 		} else {
 			document.getElementById("slide_"+i).style.display="none"
 			document.getElementById("notes_"+i).style.display="none"
@@ -508,7 +504,7 @@ function onPageLoad() {
 <div id="output"></div>
 </table>
 <div id="errors"></div>
-<div id="notes">{{ printf "%s" .Notes |html}}</div>
+<div id="notes"><pre>{{ printf "%s" .Notes |html}}</pre></div>
 </body>
 </html>
 `
