@@ -22,11 +22,17 @@ import (
 	"text/template"
 )
 
+type Slide struct {
+	Contents string
+	Notes    string
+}
+
 var (
 	httpListen = flag.String("http", "127.0.0.1:3999", "host:port to listen on")
 	htmlOutput = flag.Bool("html", false, "render program output as HTML")
 	slidesFile = flag.String("slides", "slides.go", "Slides file to read in")
-	slides     [][]byte
+	staticHTML = flag.String("static", "", "write slides to static HTML file")
+	slides     []Slide
 )
 
 var (
@@ -45,11 +51,20 @@ func main() {
 	}()
 
 	readSlides()
-
-	http.HandleFunc("/", FrontPage)
-	http.HandleFunc("/compile", Compile)
-	fmt.Printf("Listening on %s\n", *httpListen)
-	log.Fatal(http.ListenAndServe(*httpListen, nil))
+	if *staticHTML != "" {
+		fmt.Println("Writing to file", *staticHTML)
+		f, err := os.Create(*staticHTML)
+		if err != nil {
+			log.Fatal(err)
+		}
+		err = staticPage.Execute(f, slides)
+		f.Close()
+	} else {
+		http.HandleFunc("/", FrontPage)
+		http.HandleFunc("/compile", Compile)
+		fmt.Printf("Listening on %s\n", *httpListen)
+		log.Fatal(http.ListenAndServe(*httpListen, nil))
+	}
 }
 
 func readSlides() {
@@ -58,18 +73,24 @@ func readSlides() {
 		panic(err)
 	}
 	splitSlides := strings.Split(string(slidesRaw), "//!")
-	slides = make([][]byte, 0, len(splitSlides))
+	slides = make([]Slide, 0, len(splitSlides))
 	for _, slideString := range splitSlides {
 		trimmed := strings.TrimSpace(slideString)
 		if len(trimmed) == 0 {
 			continue
 		}
-		slides = append(slides, []byte(trimmed))
+		s := strings.Split(trimmed, "/*--")
+		notes := ""
+		if len(s) == 2 {
+			notes = strings.TrimSuffix(s[1], "*/")
+		}
+		slides = append(slides, Slide{s[0], notes})
 	}
 }
 
 type PageData struct {
-	Data      string
+	Contents  string
+	Notes     string
 	PrevSlide int64
 	NextSlide int64
 }
@@ -80,12 +101,17 @@ type PageData struct {
 // Otherwise, the default "hello, world" program is displayed.
 func FrontPage(w http.ResponseWriter, req *http.Request) {
 	data, err := ioutil.ReadFile(req.URL.Path[1:])
+	notes := ""
 	slide := int64(0)
 	if s := req.URL.Query()["s"]; s != nil {
 		slide, _ = strconv.ParseInt(s[0], 10, 16)
 	}
+	var cont string
 	if err != nil {
-		data = slides[slide]
+		cont = slides[slide].Contents
+		notes = slides[slide].Notes
+	} else {
+		cont = string(data)
 	}
 	prevSlide := slide - 1
 	if prevSlide < 0 {
@@ -95,7 +121,7 @@ func FrontPage(w http.ResponseWriter, req *http.Request) {
 	if int(nextSlide) >= len(slides) {
 		nextSlide = slide
 	}
-	params := PageData{string(data), prevSlide, nextSlide}
+	params := PageData{cont, notes, prevSlide, nextSlide}
 	frontPage.Execute(w, params)
 }
 
@@ -217,9 +243,111 @@ func run(dir string, args ...string) ([]byte, error) {
 }
 
 var frontPage = template.Must(template.New("frontPage").Parse(frontPageText)) // HTML template
-var output = template.Must(template.New("output").Parse(outputText))          // HTML template
+var staticPage = template.Must(template.New("staticPage").Parse(staticPageText))
+var output = template.Must(template.New("output").Parse(outputText)) // HTML template
 
 var outputText = `<pre>{{printf "%s" . |html}}</pre>`
+
+var staticPageText = `<!doctype html>
+<html>
+<head>
+<style>
+.notes .slide {
+	font-family: Monaco, 'Courier New', 'DejaVu Sans Mono', 'Bitstream Vera Sans Mono', monospace;
+}
+.slide td {
+	border: 1px solid black;
+	height: 400px;
+}
+.controls td {
+	height: 20px;
+}
+.notes td {
+	height: 80px;
+}
+td {
+	width: 800px;
+	vertical-align: text-top;
+	padding: 10px;
+}
+
+</style>
+<script>
+
+function toggleNotes() {
+	if (noteState=="none") {
+		noteState = "inline"
+		document.cookie="notes=true"
+		document.getElementById("noteButton").innerHTML = "Hide notes"
+	} else {
+		noteState = "none"
+		document.cookie="notes="
+		document.getElementById("noteButton").innerHTML = "Show notes"
+	}
+	displaySlide()
+}
+
+function next() {
+	currentSlide++;
+	displaySlide();
+}
+
+function prev() {
+	currentSlide--;
+	displaySlide();
+}
+
+function displaySlide() {
+	numSlides = document.getElementsByClassName("slide").length
+	if (currentSlide < 0) {
+		currentSlide = 0;
+	}
+	if (currentSlide >= numSlides) {
+		currentSlide = numSlides-1;
+	}
+	for (i=0; i<numSlides; i++) {
+		if (i==currentSlide) {
+			document.getElementById("slide_"+i).style.display="inline"
+			document.getElementById("notes_"+i).style.display=noteState
+		} else {
+			document.getElementById("slide_"+i).style.display="none"
+			document.getElementById("notes_"+i).style.display="none"
+		}
+	}
+}
+
+function onPageLoad() {
+	currentSlide = 0
+	noteState = "none"
+	var c = document.cookie;
+	if (c.search("notes=true")>=0) {
+		toggleNotes()
+	}
+	displaySlide()
+}
+
+</script>
+</head>
+<body onload="onPageLoad()">
+<table>
+{{range $i, $contents := .}}
+<tr class="slide" id="slide_{{printf "%d" $i }}"><td><pre>{{printf "%s" $contents.Contents |html}}</pre></td></tr>
+{{end}}
+<tr class="controls"><td>
+<button id="noteButton" onclick="toggleNotes()">Show notes</button>
+<button onclick="prev()">Previous</button>
+<button onclick="next()">Next</button>
+</td></tr>
+{{range $i, $contents := .}}
+<tr class="notes" id="notes_{{printf "%d" $i }}"><td>
+<pre>{{printf "%s" $contents.Notes |html}}</pre>
+</td></tr>
+{{end}}
+</table>
+
+</body>
+</html>
+`
 
 var frontPageText = `<!doctype html>
 <html>
@@ -228,6 +356,10 @@ var frontPageText = `<!doctype html>
 pre, textarea {
 	font-family: Monaco, 'Courier New', 'DejaVu Sans Mono', 'Bitstream Vera Sans Mono', monospace;
 	font-size: 100%;
+}
+#notes {
+	font-family: Monaco, 'Courier New', 'DejaVu Sans Mono', 'Bitstream Vera Sans Mono', monospace;
+	font-size: 50%;
 }
 .hints {
 	font-size: 0.8em;
@@ -334,14 +466,35 @@ function compileUpdate() {
 		document.getElementById("output").innerHTML = "";
 	}
 }
+
+function toggleNotes() {
+	state = document.getElementById("notes").style.display
+	if (state=="none") {
+		document.getElementById("notes").style.display = ""
+		document.cookie="notes=true"
+		document.getElementById("noteButton").innerHTML = "Hide notes"
+	} else {
+		document.getElementById("notes").style.display = "none"
+		document.cookie="notes="
+		document.getElementById("noteButton").innerHTML = "Show notes"
+	}
+}
+
+function onPageLoad() {
+	var c = document.cookie;
+	if (c.search("notes=true")<0) {
+		toggleNotes()
+	}
+}
 </script>
 </head>
-<body>
+<body onload="onPageLoad()">
 <table width="100%"><tr><td width="60%" valign="top">
-<textarea autofocus="true" id="edit" spellcheck="false" onkeydown="keyHandler(event);" onkeyup="autocompile();">{{printf "%s" .Data |html}}</textarea>
+<textarea autofocus="true" id="edit" spellcheck="false" onkeydown="keyHandler(event);" onkeyup="autocompile();">{{printf "%s" .Contents |html}}</textarea>
 <div class="hints">
 (Shift-Enter to compile and run.)&nbsp;&nbsp;&nbsp;&nbsp;
 <input type="checkbox" id="autocompile" value="checked" /> Compile and run after each keystroke
+<button id="noteButton" onclick="toggleNotes()">Hide notes</button>
 <button onclick="window.location.href = '/?s={{ printf "%d" .PrevSlide }}'">Previous</button>
 <button onclick="window.location.href = '/?s={{ printf "%d" .NextSlide }}'">Next</button>
 
@@ -351,6 +504,7 @@ function compileUpdate() {
 <div id="output"></div>
 </table>
 <div id="errors"></div>
+<div id="notes"><pre>{{ printf "%s" .Notes |html}}</pre></div>
 </body>
 </html>
 `
